@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sachenna/go-junit-report/parser"
+	"github.com/jbeshay/go-junit-report/parser"
 )
 
 // JUnitTestSuites is a collection of JUnit test suites.

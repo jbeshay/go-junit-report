@@ -7,6 +7,7 @@ import (
 	"path"
 	"regexp"
 	"time"
+	"fmt"
 )
 
 // Result represents a test result.
@@ -51,6 +52,14 @@ type Test struct {
 	Time int // in milliseconds
 }
 
+type Info struct {
+	Suite string
+	Test  string
+	Msg   string
+	Time  string
+}
+
+
 // Benchmark contains the results of a single benchmark.
 type Benchmark struct {
 	Name     string
@@ -70,6 +79,7 @@ var (
 	regexBenchmark = regexp.MustCompile(`^(Benchmark[^ -]+)(?:-\d+\s+|\s+)(\d+)\s+(\d+|\d+\.\d+)\sns/op(?:\s+(\d+)\sB/op)?(?:\s+(\d+)\sallocs/op)?`)
 	regexOutput    = regexp.MustCompile(`(    )*\t(.*)`)
 	regexSummary   = regexp.MustCompile(`^(PASS|FAIL|SKIP)$`)
+	regexTestStart = regexp.MustCompile(`STARTING E2E STAGE:\s+(\w+)`)
 )
 
 // Parse parses go test output from reader r and returns a report with the
@@ -81,8 +91,11 @@ func Parse(r io.Reader, pkgName string) (*Report, error) {
 	report := &Report{make([]Package, 0)}
 
 	var suites = make(map[string]map[string]*Test)
+	var initSuite = make(map[string]*Test)
 
 	var cur *Test
+
+	var lastSeenStage string
 
 	// parse lines
 	for {
@@ -95,13 +108,8 @@ func Parse(r io.Reader, pkgName string) (*Report, error) {
 
 		line := string(l)
 
-		type Info struct {
-			Suite string
-			Test  string
-			Msg   string
-		}
-
 		var info Info
+
 
 		if matches := regexResult.FindStringSubmatch(line); len(matches) == 6 {
 			for suite, testmap := range suites {
@@ -136,6 +144,13 @@ func Parse(r io.Reader, pkgName string) (*Report, error) {
 			}
 
 			if testdata == nil {
+				stageInitTestName := fmt.Sprintf("%s_%s", lastSeenStage, curTest)
+				if testInfo, ok := initSuite[stageInitTestName]; ok {
+					testdata = testInfo
+				}
+			}
+
+			if testdata == nil {
 				cur = nil
 				continue
 			}
@@ -151,22 +166,35 @@ func Parse(r io.Reader, pkgName string) (*Report, error) {
 
 			testdata.Duration = parseSeconds(matches[3])
 			cur = testdata
+		} else if matches := regexTestStart.FindStringSubmatch(line); len(matches) == 2 {
+			testName := fmt.Sprintf("%s_TestGoe2e", matches[1])
+			if _, ok := initSuite[testName]; !ok {
+				t := &Test{
+					Name: testName,
+				}
+				initSuite[testName] = t
+				lastSeenStage = matches[1]
+				cur = t
+			}
+
 		} else if err := json.Unmarshal([]byte(line), &info); err == nil {
-			if testmap, mapok := suites[info.Suite]; mapok {
+			if cur != nil && (info.Suite == "" || info.Test == "") {
+				cur.Output = appenLineWithTimeStamp(cur.Output, info)
+			} else if testmap, mapok := suites[info.Suite]; mapok {
 				if test, ok := testmap[info.Test]; ok {
-					test.Output = append(test.Output, info.Msg)
+					test.Output = appenLineWithTimeStamp(test.Output, info)
 				} else {
 					t := &Test{
 						Name: info.Test,
 					}
-					t.Output = append(t.Output, info.Msg)
+					t.Output = appenLineWithTimeStamp(t.Output, info)
 					testmap[info.Test] = t
 				}
 			} else {
 				t := &Test{
 					Name: info.Test,
 				}
-				t.Output = append(t.Output, info.Msg)
+				t.Output = appenLineWithTimeStamp(t.Output, info)
 				m := make(map[string]*Test)
 				m[info.Test] = t
 				suites[info.Suite] = m
@@ -180,13 +208,25 @@ func Parse(r io.Reader, pkgName string) (*Report, error) {
 		}
 	}
 
+	var finalTests []*Test
+	var suiteTime = time.Duration(0)
+	for _, testinfo := range initSuite {
+		finalTests = append(finalTests, testinfo)
+		suiteTime += testinfo.Duration
+	}
+	report.Packages = append(report.Packages, Package{
+		Name:     "InitializationSteps",
+		Duration: suiteTime,
+		Time:     int(suiteTime / time.Millisecond),
+		Tests:    finalTests,
+	})
+
 	return report, nil
 }
 
-type Info struct {
-	Suite string
-	Test  string
-	Msg   string
+func appenLineWithTimeStamp(output []string, infoLine Info) []string {
+	line := fmt.Sprintf("%s %s", infoLine.Time, infoLine.Msg)
+	return append(output, line)
 }
 
 // parseLine parses the string

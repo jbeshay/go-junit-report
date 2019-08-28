@@ -71,7 +71,7 @@ type Benchmark struct {
 }
 
 var (
-	regexStatus   = regexp.MustCompile(`--- (PASS|FAIL|SKIP): (.+) \((\d+\.\d+)(?: seconds|s)\)`)
+	regexStatus   = regexp.MustCompile(`--- (PASS|FAIL|SKIP): (.+)\/(.+)\/(.+) \((\d+\.\d+)(?: seconds|s)\)`)
 	regexIndent   = regexp.MustCompile(`^([ \t]+)---`)
 	regexCoverage = regexp.MustCompile(`^coverage:\s+(\d+\.\d+)%\s+of\s+statements(?:\sin\s.+)?$`)
 	regexResult   = regexp.MustCompile(`^(ok|FAIL)\s+([^ ]+)\s+(?:(\d+\.\d+)s|\(cached\)|(\[\w+ failed]))(?:\s+coverage:\s+(\d+\.\d+)%\sof\sstatements(?:\sin\s.+)?)?$`)
@@ -127,9 +127,11 @@ func Parse(r io.Reader, pkgName string) (*Report, error) {
 				})
 			}
 			suites = make(map[string]map[string]*Test)
-		} else if matches := regexStatus.FindStringSubmatch(line); len(matches) == 4 {
+		} else if matches := regexStatus.FindStringSubmatch(line); len(matches) == 6 {
 
-			curTest := path.Base(matches[2])
+			curSuite := path.Base(matches[3])
+			curTest := path.Base(matches[4])
+			fmt.Printf("Inspecting suite %s, %s\n", curSuite, curTest)
 			var testdata *Test = nil
 			for _, testmap := range suites {
 				for test, testInfo := range testmap {
@@ -151,8 +153,22 @@ func Parse(r io.Reader, pkgName string) (*Report, error) {
 			}
 
 			if testdata == nil {
-				cur = nil
-				continue
+				if testmap, mapok := suites[curSuite]; mapok {
+					if _, ok := testmap[curTest]; !ok {
+						t := &Test{
+							Name: curTest,
+						}
+						testmap[curTest] = t
+					}
+				} else {
+					t := &Test{
+						Name: curTest,
+					}
+					m := make(map[string]*Test)
+					m[curTest] = t
+					suites[curSuite] = m
+				}
+				testdata = suites[curSuite][curTest]
 			}
 
 			// test status
@@ -164,7 +180,7 @@ func Parse(r io.Reader, pkgName string) (*Report, error) {
 				testdata.Result = FAIL
 			}
 
-			testdata.Duration = parseSeconds(matches[3])
+			testdata.Duration = parseSeconds(matches[5])
 			cur = testdata
 		} else if matches := regexTestStart.FindStringSubmatch(line); len(matches) == 2 {
 			testName := fmt.Sprintf("%s_TestGoe2e", matches[1])

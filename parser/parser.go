@@ -131,7 +131,6 @@ func Parse(r io.Reader, pkgName string) (*Report, error) {
 
 			curSuite := path.Base(matches[3])
 			curTest := path.Base(matches[4])
-			fmt.Printf("Inspecting suite %s, %s\n", curSuite, curTest)
 			var testdata *Test = nil
 			for _, testmap := range suites {
 				for test, testInfo := range testmap {
